@@ -1,25 +1,30 @@
 from load_train_data import DataSource
+from unicodedata import name
 import pandas as pd
 import regex as re
-from pyvi import ViTokenizer, ViPosTagger
+from pyvi import ViTokenizer
 import numpy as np
 import fasttext
 from sklearn import svm
 import joblib
+from sklearn.svm import LinearSVC
+from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import train_test_split
+from sklearn import metrics
 
-raw_comment_train_file = './data/train.crash'
-comment_file = './data/train_comment.txt'
-label_file = './data/train_label.txt'
-max_length = 100                            
+raw_comment_file = './data/comment.crash'
+comment_file = './data/comment.txt'
+label_file = './data/label.txt'
+max_length = 50                            
 num_of_data_sentence = 16087                
-num_of_dimension = 100                        
+num_of_dimension = 32                        
 minimum_substring_size = 3
 maximal_substring_size = 6
 num_of_epoch = 5
 num_of_learning_rate = 0.05
-num_of_thread = 4
-word_vector_model_path = './model/word_vector_model.bin'
-classified_model_path = './model/classify_model.joblib'
+num_of_thread = 12
+fasttext_cbow_model_path = './model/fasttext_cbow_model.bin'
+svm_model_path = './model/svm_model.joblib'
 
 bang_nguyen_am = [['a', 'à', 'á', 'ả', 'ã', 'ạ', 'a'],
                   ['ă', 'ằ', 'ắ', 'ẳ', 'ẵ', 'ặ', 'aw'],
@@ -34,17 +39,11 @@ bang_nguyen_am = [['a', 'à', 'á', 'ả', 'ã', 'ạ', 'a'],
                   ['ư', 'ừ', 'ứ', 'ử', 'ữ', 'ự', 'uw'],
                   ['y', 'ỳ', 'ý', 'ỷ', 'ỹ', 'ỵ', 'y']]
 bang_ky_tu_dau = ['', 'f', 's', 'r', 'x', 'j']
-
 nguyen_am_to_ids = {}
 
 for i in range(len(bang_nguyen_am)):
     for j in range(len(bang_nguyen_am[i]) - 1):
         nguyen_am_to_ids[bang_nguyen_am[i][j]] = (i, j)
-
-def switch_data_to_line():
-    ds = DataSource()
-    train_data = pd.DataFrame(ds.load_data("data/train.crash"))
-    return train_data.review, train_data.label
 
 def loaddicchar():
     dic = {}
@@ -182,6 +181,7 @@ def text_preprocess(comment):
     comment = re.sub(r'[^\s\wáàảãạăắằẳẵặâấầẩẫậéèẻẽẹêếềểễệóòỏõọôốồổỗộơớờởỡợíìỉĩịúùủũụưứừửữựýỳỷỹỵđ_]',' ',comment)
     # xóa khoảng trắng thừa
     comment = re.sub(r'\s+', ' ', comment).strip()
+
     return comment
 
 def preprocess(comments):
@@ -207,25 +207,6 @@ def save_to_file(comments, labels):
 
     pass
 
-def training_word_vector_model(comment_train_file):
-    print('------- Training word vector model... -------\n')
-
-    word_vector_model = fasttext.train_unsupervised(
-        comment_train_file,
-        "cbow",
-        minn = minimum_substring_size,
-        maxn = maximal_substring_size,
-        dim = num_of_dimension,
-        epoch = num_of_epoch,
-        lr = num_of_learning_rate,
-        thread = num_of_thread
-    )
-
-    word_vector_model.save_model(word_vector_model_path)
-
-    print('------- Training word vector model complete... -------\n')
-    return word_vector_model
-
 def get_sentence_vector(sentence, model):
     vectored_sentence = []
     for index, word in enumerate(sentence.split()):
@@ -247,31 +228,63 @@ def get_vectored_data_input(comments, model):
         vectored_sentence = get_sentence_vector(comment, model)
         train_data.append(vectored_sentence)
 
-    train_data = np.array(train_data).reshape(num_of_data_sentence, max_length * num_of_dimension)
+    train_data = np.array(train_data).reshape(len(train_data), max_length * num_of_dimension)
 
     return train_data
 
-def training_classifying_model(train_data, train_label):
-    print('------- Training classifying model... -------\n')
+def test_accurancy(svm_model, x_test, y_test):
+    predicted = svm_model.predict(x_test)
+    accurancy = metrics.accuracy_score(y_test, predicted)
 
-    classify_model = svm.SVC(C=0.01, kernel='rbf', probability=True)
-    classify_model = classify_model.fit(train_data, train_label)
-    joblib.dump(classify_model, classified_model_path)
+    print(predicted, end='\n')
+    print(y_test, end='\n')
+    print(predicted == y_test, end='\n')
+    print(accurancy)
 
-    print('------- Training classifying model complete -------\n')
-    return classify_model
+def training_fasttext_model(comment_train_file, algorithm, fasttext_model_path):
+    print('------- Training ' + algorithm + ' model... -------\n')
+
+    fasttext_model = fasttext.train_unsupervised(
+        comment_train_file,
+        algorithm,
+        minn = minimum_substring_size,
+        maxn = maximal_substring_size,
+        dim = num_of_dimension,
+        epoch = num_of_epoch,
+        lr = num_of_learning_rate,
+        thread = num_of_thread
+    )
+
+    fasttext_model.save_model(fasttext_model_path)
+
+    print('------- Training ' + algorithm + ' model complete... -------\n')
+    return fasttext_model
+
+def training_svm_model(comments, labels):
+    print('------- Training SVM model... -------\n')
+
+    x_train, x_test, y_train, y_test = train_test_split(comments, labels, test_size=0.2, random_state=111)
+
+    svm_model = LinearSVC(random_state=111)
+    svm_model.fit(x_train, y_train)
+    joblib.dump(svm_model, svm_model_path)
+
+    test_accurancy(svm_model, x_test, y_test)
+
+    print('------- Training SVM model complete -------\n')
+
+    return svm_model
 
 if __name__ == '__main__':
     ds = DataSource()
-    train_data = pd.DataFrame(ds.load_data(raw_comment_train_file))
+    train_data = pd.DataFrame(ds.load_data(raw_comment_file))
 
     comments = preprocess(train_data.review)
     labels = np.array(train_data.label)
 
     save_to_file(comments, labels)
 
-    word_vector_model = training_word_vector_model(comment_file)
+    fasttext_cbow_model = training_fasttext_model(comment_file, "cbow", fasttext_cbow_model_path)
 
-    comments = get_vectored_data_input(comments, word_vector_model)
-
-    classify_model = training_classifying_model(comments, labels)
+    comments = get_vectored_data_input(comments, fasttext_cbow_model)
+    svm_model = training_svm_model(comments, labels)
