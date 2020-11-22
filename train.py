@@ -6,7 +6,6 @@ import numpy as np
 import fasttext
 from sklearn import svm
 import joblib
-import operator
 
 raw_comment_train_file = './data/train.crash'
 comment_file = './data/train_comment.txt'
@@ -262,25 +261,17 @@ def training_classifying_model(train_data, train_label):
     print('------- Training classifying model complete -------\n')
     return classify_model
 
-def classify(sentence):
-    vectored_sentence = get_sentence_vector(sentence, word_vector_model)
-    print(vectored_sentence.shape, end='\n')
-
-    pred_y1 = classify_model.predict(vectored_sentence)
-    pred_y = classify_model.predict_proba(vectored_sentence)
-
-    class_probs = pred_y[0]
-    max_class, max_prob = max(enumerate(class_probs), key=operator.itemgetter(1))
-
-    class_str = 'Tiêu cực' if max_class == 1 else 'Tích cực'
-    prob_str = '%d' % int(max_prob*100)
-      
-    return class_str, (prob_str + '%')
-
 if __name__ == '__main__':
-    word_vector_model = fasttext.load_model(word_vector_model_path)
-    classify_model = joblib.load(classified_model_path)
-    print('Loaded svm model!', end='\n')
+    ds = DataSource()
+    train_data = pd.DataFrame(ds.load_data(raw_comment_train_file))
 
-    sentence = "Áo rất xấu"
-    print(classify(sentence))
+    comments = preprocess(train_data.review)
+    labels = np.array(train_data.label)
+
+    save_to_file(comments, labels)
+
+    word_vector_model = training_word_vector_model(comment_file)
+
+    comments = get_vectored_data_input(comments, word_vector_model)
+
+    classify_model = training_classifying_model(comments, labels)
